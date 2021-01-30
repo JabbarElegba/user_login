@@ -1,16 +1,17 @@
 from typing import List
+from fastapi import Depends, FastAPI, HTTPException, status,File, UploadFile
+from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
-from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from .database import SessionLocal, engine
 from . import crud, models, schemas
+from .database import SessionLocal, engine
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
+import shutil
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
 
 # Dependency
 def get_db():
@@ -19,6 +20,7 @@ def get_db():
         yield db
     finally:
         db.close()
+
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -67,8 +69,35 @@ def create_user(
 ):
     return crud.create_user(db=db, user=user)
 
+@app.post("/posts/",status_code=status.HTTP_201_CREATED)
+def create_post(
+    title:str,body:str,file: UploadFile = File(...), db: Session = Depends(get_db),current_user: models.User = Depends(get_current_user)
+):
+    user_id=current_user.id
 
-# @app.get("/items/", response_model=List[schemas.Item])
-# def read_items(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-#     items = crud.get_items(db, skip=skip, limit=limit)
-#     return itemsß
+    with open("media/"+file.filename, "wb") as image:
+        shutil.copyfileobj(file.file, image)
+
+    url = str("media/"+file.filename)
+
+    return crud.create_post(db=db,user_id=user_id,title=title,body=body,url=url)
+
+@app.get("/posts/")
+def post_list(db: Session = Depends(get_db)):
+    return crud.post_list(db=db)
+
+@app.post("/posts/{post_id}/comment",response_model=schemas.CommentList)
+def create_comment(
+        comment:schemas.CommentBase ,post_id:int,db:Session = Depends(get_db)
+):
+    return  crud.create_comment(db=db,post_id=post_id,comment=comment)
+
+@app.get("/posts/{post_id}")
+def post_detail(post_id:int,db: Session = Depends(get_db)):
+    post =crud.get_post(db=db, id=post_id)
+    comment = db.query(models.Comment).filter(models.Comment.post_id == post_id)
+    active_comment = comment.filter(models.Comment.is_active == True).all()
+
+    if post is None:
+        raise HTTPException(status_code=404,detail="post does not exist")
+    return {"post":post,"active_comment":active_comment}
